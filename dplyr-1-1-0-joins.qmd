@@ -1,0 +1,617 @@
+---
+title: "Novidades da dplyr versão 1.1.0"
+lang: pt
+format:
+  html:
+    toc: true
+    number-sections: true
+    css: styles.css
+execute: 
+  warning: false
+---
+
+
+```{r, cache=FALSE}
+
+library(tidyverse)
+library(DBI)
+library(reactable)
+
+```
+
+
+# Dados
+
+
+Dados do Kaggle de eventos de partidas
+
+
+```{r cache=TRUE}
+
+
+options(
+    gargle_oauth_cache = ".secrets",
+    gargle_oauth_email = TRUE
+)
+
+
+con <- dbConnect(
+    bigrquery::bigquery(),
+    project = "bigquerycrotman",
+    dataset = "football",
+    billing = "bigquerycrotman"
+)
+
+
+eventos <- tbl(con, "events") |> 
+    collect(
+        page_size = 10000    
+    )
+
+
+jogos <- tbl(con, "games") |> 
+    collect(
+        page_size = 10000    
+    )
+
+
+
+```
+
+
+Vamos selecionar e dar nome aos campos interessantes 
+
+
+```{r}
+
+eventos_selec <- eventos |> 
+    select(
+        id_odsp,
+        id_event,
+        ordem = sort_order,
+        tempo_de_jogo = time,
+        time = side,
+        foi_gol = is_goal,
+        tipo_evento = event_type,
+        jogador = player,
+        tipo_evento_secundario = event_type2,
+        jogador_secundario = player2,
+        regiao_campo = shot_place,
+        resultado = shot_outcome,
+        situacao_de_jogo = situation,
+        corpo = bodypart,
+        comentario = text
+    )
+
+
+jogos_select <- jogos |> 
+    select(
+        id_odsp,
+        pais = country,
+        temporada = season,
+        time_casa = at,
+        time_visitante = ht,
+        data = date,
+        gols_casa =ftag,
+        gols_visitante = fthg,
+        odd_empate = odd_d,
+        odd_casa = odd_h,
+        odd_visitante = odd_a
+    )
+
+
+
+
+```
+
+
+
+
+# Join com join_by. Melhoria na sintaxe 
+
+
+Antes, o parâmetro `by` das operações de join tinha que ser receber um vetor nomeado. 
+
+O nome do item era o campo do tabela da esquerda. O valor do item era o nome do campo na tabela da direita.
+
+
+```{r}
+
+jogos_com_eventos <- jogos_select |> 
+    left_join(
+        eventos_selec,
+        by = c("id_odsp" = "id_odsp")
+    )
+
+
+```
+
+
+Isso era estranho.
+
+Agora você pode usar a função `join_by()`
+
+É uma sintaxe que faz mais sentido.
+
+
+```{r, warning = TRUE}
+
+jogos_com_eventos <- jogos_select |> 
+    left_join(
+        eventos_selec,
+        by = join_by(id_odsp == id_odsp)
+    )
+    
+
+
+```
+
+
+Essa mensagem é interessante e é uma nova funcionalidade.
+
+Como para o nosso caso é esperado, pela cardinalidade da relação, podemos silenciá-la.
+
+O parâmetro `multiple` não só silencia o warning como faz outras coisas. Leia a documentação
+
+
+```{r, warning=TRUE}
+
+jogos_com_eventos <- jogos_select |> 
+    left_join(
+        eventos_selec,
+        by = join_by(id_odsp == id_odsp),
+        multiple = "all"
+    )
+
+
+
+```
+
+Resultado
+
+
+```{r, out.width="100%"}
+
+primeiro_jogo <- jogos_com_eventos |> 
+    group_by(
+        id_odsp
+    ) |> 
+    mutate(
+        id_grupo = cur_group_id()
+    ) |> 
+    ungroup() |> 
+    filter(
+        id_grupo == 1
+    ) |> 
+    arrange(
+        tempo_de_jogo
+    ) |> 
+    select(
+        tempo_de_jogo,
+        foi_gol,
+        time,
+        tipo_evento,
+        jogador,
+        tipo_evento_secundario,
+        jogador_secundario,
+        comentario
+    )
+
+
+reactable(
+    primeiro_jogo |> janitor::clean_names(case = "title"),
+    compact = TRUE,
+    striped = TRUE,
+    style = list(fontSize = "50%"),
+    columns = list(
+        Comentario = colDef(
+            minWidth = 200
+        )
+    ),
+    defaultColDef = colDef(
+        minWidth = 50
+    ),
+    fullWidth = TRUE
+)
+
+```
+
+# Join com operadores diferentes de ==
+
+Nova funcionalidade muito útil.
+
+Imagina que queiramos conhecer todos os chutes a gol de um time antes de um gol que ele tenha marcado.
+
+Será que existe uma concentração de chutes diferente logo antes de um gol? 
+
+```{r}
+
+gols <- eventos_selec |> 
+    filter(
+        foi_gol == 1,
+        tempo_de_jogo > 15,
+        tipo_evento == "Attempt" 
+    ) |> 
+    select(
+        id_odsp,
+        id_event,
+        time,
+        tempo_de_jogo,
+        ordem
+    )
+
+chutes <- eventos_selec |> 
+    filter(
+        tipo_evento == "Attempt"
+    ) |> 
+    select(
+        id_odsp,
+        id_event,
+        time,
+        tipo_evento,
+        tipo_evento_secundario,
+        resultado,
+        tempo_de_jogo,
+        ordem
+    )
+    
+
+
+gols_com_chutes_anteriores <- gols |> 
+    left_join(
+        chutes,
+        by = join_by(
+            id_odsp == id_odsp,
+            time == time,
+            ordem > ordem
+        ),
+        suffix = c("_gol", "_chute"),
+        multiple = "all"
+    ) |> 
+    mutate(
+        minutos_antes_gol = tempo_de_jogo_gol - tempo_de_jogo_chute
+    )
+    
+
+exemplo_gol <- gols_com_chutes_anteriores |>
+    filter(
+        id_event_gol == last(id_event_gol)
+    ) |> 
+    arrange(
+        tempo_de_jogo_chute
+    )
+
+
+
+```
+
+
+
+```{r}
+
+reactable(
+    exemplo_gol |> janitor::clean_names(case = "title"),
+    compact = TRUE,
+    striped = TRUE,
+    style = list(fontSize = "50%"),
+    columns = list(
+        Comentario = colDef(
+            minWidth = 200
+        )
+    ),
+    defaultColDef = colDef(
+        minWidth = 50
+    ),
+    fullWidth = TRUE
+)
+
+
+
+```
+
+
+# Join rolante
+
+
+No join anterior, se tivermos mais de um gol no jogo, o join vai pegar todos os eventos desde o início do jogo.
+
+```{r}
+
+
+exemplo_mais_de_1_gol <-  gols_com_chutes_anteriores |> 
+    group_by(
+        id_odsp,
+        time
+    ) |> 
+    mutate(
+        gols_do_time = n_distinct(id_event_gol)
+    ) |> 
+    ungroup() |> 
+    filter(
+        gols_do_time > 1
+    ) |> 
+    filter(
+        id_odsp == first(id_odsp),
+        time == first(time)
+    )
+    
+
+```
+
+```{r, cache=FALSE}
+
+tabela <-  exemplo_mais_de_1_gol |> 
+    arrange(
+        id_event_gol,
+        time,
+        ordem_chute
+    ) |> 
+    reactable(
+        groupBy = "id_event_gol",
+        compact = TRUE,
+        striped = TRUE,
+        style = list(fontSize = "50%"),
+        defaultColDef = colDef(
+            minWidth = 50
+        ),
+        fullWidth = TRUE
+        
+    )
+
+tabela
+
+
+```
+
+
+Talvez queiramos apenas o último chute antes do gol
+
+
+```{r}
+
+
+gols_com_ultimo_chute <- gols |> 
+    left_join(
+        chutes,
+        by = join_by(
+            id_odsp == id_odsp,
+            time == time,
+            closest(ordem > ordem)
+        ),
+        suffix = c("_gol", "_chute")
+        
+    ) |> 
+    mutate(
+        minutos_antes_gol = tempo_de_jogo_gol - tempo_de_jogo_chute
+    )
+
+
+
+exemplo_mais_de_1_gol_ultimo_chute <- gols_com_ultimo_chute |> 
+    group_by(
+        id_odsp,
+        time
+    ) |> 
+    mutate(
+        gols_do_time = n_distinct(id_event_gol)
+    ) |> 
+    ungroup() |> 
+    filter(
+        gols_do_time > 1
+    ) |> 
+    filter(
+        id_odsp == first(id_odsp),
+        time == first(time)
+    )
+    
+
+
+```
+
+
+```{r}
+
+
+tabela <-  exemplo_mais_de_1_gol_ultimo_chute |> 
+    arrange(
+        id_event_gol,
+        time,
+        ordem_chute
+    ) |> 
+    reactable(
+        groupBy = "id_event_gol",
+        compact = TRUE,
+        striped = TRUE,
+        style = list(fontSize = "50%"),
+        defaultColDef = colDef(
+            minWidth = 50
+        ),
+        fullWidth = TRUE
+        
+    )
+
+tabela
+
+
+```
+
+
+# Prevenindo a perda de linhas no join
+
+No último join, usando `closest()`, usamos `left_join`, portanto mantivemos as todos os gols no nosso tibble, mesmo os que aconteceram sem que houvesse um chute anterior
+
+
+
+```{r}
+
+gols |> nrow()
+
+```
+
+
+```{r}
+
+gols_com_ultimo_chute |> nrow()
+
+```
+
+
+Entretando, se fizermos um `inner_join`, perderemos os gols que não tiveram um lance anterior
+
+
+```{r}
+
+gols_com_ultimo_chute_inner_join <- gols |> 
+    inner_join(
+        chutes,
+        by = join_by(
+            id_odsp == id_odsp,
+            time == time,
+            closest(ordem > ordem)
+        ),
+        suffix = c("_gol", "_chute")
+    ) |> 
+    mutate(
+        minutos_antes_gol = tempo_de_jogo_gol - tempo_de_jogo_chute
+    )
+
+gols_com_ultimo_chute_inner_join |>  nrow()
+
+```
+
+
+Um novo parâmetro, chamado `unmatched`, se receber o valor "erro" dispara um erro se não houver as correspondências esperadas. 
+
+- No caso do `inner_join`, o erro é disparado para falta de correspondência nas duas tabelas. 
+- No caso `left_join`, se não houver correspondência na tabela da direita
+- No caso `right_join`, se não houver correspondência na tabela da esquerda
+
+
+
+```{r, error=TRUE}
+
+
+gols_com_ultimo_chute_inner_join <- gols |> 
+    inner_join(
+        chutes,
+        by = join_by(
+            id_odsp == id_odsp,
+            time == time,
+            closest(ordem > ordem)
+        ),
+        suffix = c("_gol", "_chute"),
+        unmatched = "error"
+    ) |> 
+    mutate(
+        minutos_antes_gol = tempo_de_jogo_gol - tempo_de_jogo_chute
+    )
+
+
+```
+
+
+
+# Agrupamento para uma operação avulsa
+
+
+Estamos acostumados a fazer `group_by` e depois a operação que desejmaos fazer em grupo. Mesmo que seja apenas uma operação.
+
+Além de mais verboso do que o necessário, isso pode causar problemas se esquecermos a `ungroup()`, pois é boa prática manter o tibble agrupado apenas durante as operações em grupo: as operações que não precisam ser feitas em grupo podem ser muito mais lentas quando feitas em grupo.
+
+Imagine queiramos inserir duas colunas nos eventos com o placar de cada jogo no momento em que o vento ocorreu.
+
+
+```{r}
+
+eventos_com_placar <- eventos_selec |> 
+    arrange(ordem) |> 
+    group_by(
+        id_odsp
+    ) |> 
+    mutate(
+        gols_casa = cumsum(foi_gol == 1 & time == "Home"),
+        gols_fora = cumsum(foi_gol == 1 & time == "Away"),
+        .before = everything()
+    ) |> 
+    ungroup()
+
+exemplo_eventos_com_placar <- eventos_com_placar |> 
+    filter(
+        id_odsp == last(id_odsp)
+    ) 
+    
+exemplo_eventos_com_placar |>     
+    reactable(
+        compact = TRUE,
+        striped = TRUE,
+        style = list(fontSize = "50%"),
+        defaultColDef = colDef(
+            minWidth = 50
+        ),
+        fullWidth = TRUE
+    )
+
+
+
+```
+
+
+Veja o que acontece se por acaso esquecermos de dar `ungroup()` e fizermos uma operação que não precisava ser feita em grupo
+
+
+```{r, cache=TRUE}
+
+
+teste_execucao <- microbenchmark::microbenchmark(
+    com_ungroup = eventos_selec |> 
+        arrange(ordem) |> 
+        group_by(
+            id_odsp
+        ) |> 
+        mutate(
+            gols_casa = cumsum(foi_gol == 1 & time == "Home"),
+            gols_fora = cumsum(foi_gol == 1 & time == "Away"),
+            .before = everything()
+        ) |> 
+        ungroup() |> 
+        mutate(
+            tempo = if_else(tempo_de_jogo <= 45, 1, 2)
+        ),
+    
+    
+    sem_ungroup = eventos_selec |> 
+        arrange(ordem) |> 
+        group_by(
+            id_odsp
+        ) |> 
+        mutate(
+            gols_casa = cumsum(foi_gol == 1 & time == "Home"),
+            gols_fora = cumsum(foi_gol == 1 & time == "Away"),
+            .before = everything()
+        ) |> 
+        mutate(
+            tempo = if_else(tempo_de_jogo <= 45, 1, 2)
+        ),
+    
+    times = 10
+    
+    
+
+)
+
+teste_execucao
+
+```
+
+
+```{r}
+
+autoplot(teste_execucao) +
+    theme_minimal()
+
+```
+
+
+
+
+
