@@ -16,6 +16,7 @@ execute:
 library(tidyverse)
 library(DBI)
 library(reactable)
+library(microbenchmark)
 
 ```
 
@@ -184,9 +185,10 @@ primeiro_jogo <- jogos_com_eventos |>
         id_grupo == 1
     ) |> 
     arrange(
-        tempo_de_jogo
+        ordem
     ) |> 
     select(
+        ordem,
         tempo_de_jogo,
         foi_gol,
         time,
@@ -216,7 +218,7 @@ reactable(
 
 ```
 
-# Join com operadores diferentes de ==
+# Join com operadores diferentes de ==  {#sec-join-inequal}
 
 Nova funcionalidade muito útil.
 
@@ -272,6 +274,8 @@ gols_com_chutes_anteriores <- gols |>
         minutos_antes_gol = tempo_de_jogo_gol - tempo_de_jogo_chute
     )
     
+
+
 
 exemplo_gol <- gols_com_chutes_anteriores |>
     filter(
@@ -610,6 +614,85 @@ autoplot(teste_execucao) +
     theme_minimal()
 
 ```
+
+
+
+# Existe uma concentração não usual de chutes a favor de um time minutos antes do gol desse time?
+
+
+Temos um dataframe criado na @sec-join-inequal que contém os eventos anteriores a um gol pra cada gol na nossa base de eventos.
+
+
+```{r}
+
+n_gols_na_base <- nrow(gols)
+
+
+indice_chutes_minutos_antes <- gols_com_chutes_anteriores |> 
+  filter(
+    between(minutos_antes_gol, 0, 15)
+  ) |> 
+  summarise(
+    .by = minutos_antes_gol,
+    indice_chutes = n()/n_gols_na_base
+  ) |> 
+  arrange(minutos_antes_gol)
+
+
+
+
+```
+
+
+```{r}
+
+
+ggplot(indice_chutes_minutos_antes,
+    aes(
+      x = minutos_antes_gol,
+      y = indice_chutes
+    ),
+ ) +
+  geom_line(
+    color = "darkblue",
+    linewidth = 1.5
+  ) +
+  geom_point(
+    color = "darkblue",
+    size = 2.5
+  ) +
+  scale_x_reverse() +
+  geom_smooth(
+    se = FALSE,
+    linetype = "dashed",
+    color = "darkgreen",
+    method = "lm"
+  ) +
+  scale_y_continuous(
+    label = scales::percent_format(),
+    limits = c(0,NA),
+    minor_breaks = seq(0, 0.2, 0.01)
+  )+
+  theme_minimal()
+
+
+
+```
+
+
+O número de chutes por gol aumenta um pouco do minuto 15 antes do gol até o minuto do gol. Mas será que essa quantidade de chutes por gol é maior do que a de um período ao final do qual não há gol?
+
+
+Para isso vamos gerar populações com eventos de gol gerados de forma aleatória (com as mesmas características) e analisar o índice de chutes por gols nos minutos próximos ao evento do gol artificial. Para gerar populações com as mesmas características vamos embaralhar jogos com o mesmo resultado. 
+
+Ou seja, imagine um jogo de placar 2x1 em que    
+
+
+
+
+
+
+
 
 
 
