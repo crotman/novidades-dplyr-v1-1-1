@@ -685,8 +685,80 @@ O número de chutes por gol aumenta um pouco do minuto 15 antes do gol até o mi
 
 Para isso vamos gerar populações com eventos de gol gerados de forma aleatória (com as mesmas características) e analisar o índice de chutes por gols nos minutos próximos ao evento do gol artificial. Para gerar populações com as mesmas características vamos embaralhar jogos com o mesmo resultado. 
 
-Ou seja, imagine um jogo de placar 2x1 em que    
+Ou seja, imagine um jogo de placar Casa 2x1 Fora em que os gols saíram para o time da Casa em 15 e 30 minutos, e para o time de fora aos 60. Nas populações geradas artificialmente, esses gols, nestes momentos do jogo, serão atribuídos aleatoriamente a outro jogo de mesmo placar. Ou seja, embaralharemos cada grupo de jogos com placar igual. Assim geramos populações com propriedades mais próximas possíveis, mas com gols aleatoriamente distribuídos ao longo do jogo.
 
+```{r}
+
+gera_populacao_nula <- function(gols, chutes, jogos, eventos){
+
+
+    jogos_embaralhados <- jogos |> 
+        select(
+            id_odsp,
+            gols_casa,
+            gols_visitante
+        ) |> 
+        mutate(
+            id_odsp_embaralhado = sample(id_odsp),
+            n = n(),
+            .before = everything(),
+            .by = c(gols_casa, gols_visitante)
+        ) |> 
+        select(
+            id_odsp,
+            id_odsp_embaralhado
+        )
+
+    browser()
+    
+    gols_embaralhados <- gols |> 
+        inner_join(
+            jogos_embaralhados,
+            by = join_by(id_odsp)
+        ) |> 
+        select(
+            -id_odsp
+        ) |> 
+        mutate(
+            id_odsp = id_odsp_embaralhado,
+            .keep = "unused"
+        ) |> 
+        left_join(
+            eventos |> summarise(.by = c(id_odsp, tempo_de_jogo), ordem = min(ordem)),
+            by = join_by(id_odsp, closest(tempo_de_jogo >= tempo_de_jogo)),
+            suffix = c("_old","")
+        )
+    
+    
+
+    gols_com_chutes_anteriores <- gols_embaralhados |> 
+        left_join(
+            chutes,
+            by = join_by(
+                id_odsp == id_odsp,
+                time == time,
+                ordem > ordem
+            ),
+            suffix = c("_gol", "_chute"),
+            multiple = "all"
+        ) |> 
+        mutate(
+            minutos_antes_gol = tempo_de_jogo_gol - tempo_de_jogo_chute
+        )
+    
+    
+    
+    
+} 
+
+
+
+
+
+gera_populacao_nula(gols = gols, chutes = chutes, jogos = jogos_select, eventos = eventos_selec)
+
+
+```
 
 
 
